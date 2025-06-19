@@ -2,7 +2,8 @@ FROM debian:bookworm-slim
 
 # Set environment variables
 ENV LANG=en_US.utf8 \
-    DEBIAN_FRONTEND=noninteractive
+    DEBIAN_FRONTEND=noninteractive \
+    NGROK_VERSION=3.3.5
 
 # Install dependencies with cleanup
 RUN apt-get update && \
@@ -34,26 +35,32 @@ RUN mkdir /run/sshd && \
     echo 'PasswordAuthentication yes' >> /etc/ssh/sshd_config && \
     echo 'root:choco' | chpasswd
 
-# Ngrok setup
+# Install ngrok with proper config
 ARG NGROK_TOKEN
-ENV NGROK_TOKEN=${NGROK_TOKEN}
-RUN wget -O ngrok.zip https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-linux-amd64.zip && \
+RUN wget -O ngrok.zip https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v${NGROK_VERSION}-stable-linux-amd64.zip && \
     unzip ngrok.zip && \
     rm ngrok.zip && \
     mkdir -p /root/.config/ngrok && \
-    echo "authtoken: ${NGROK_TOKEN}" > /root/.config/ngrok/ngrok.yml && \
+    echo "version: 2" > /root/.config/ngrok/ngrok.yml && \
+    echo "authtoken: ${NGROK_TOKEN}" >> /root/.config/ngrok/ngrok.yml && \
+    echo "region: ap" >> /root/.config/ngrok/ngrok.yml && \
     chmod +x ngrok
 
 # Create startup script
 RUN echo "#!/bin/bash" > /start.sh && \
     echo "service ssh start" >> /start.sh && \
-    echo "./ngrok tcp 22 &" >> /start.sh && \
-    echo "echo 'Ngrok and SSH started'" >> /start.sh && \
-    echo "tail -f /dev/null" >> /start.sh && \
+    echo "./ngrok tcp 22 --log=stdout &" >> /start.sh && \
+    echo "echo 'Ngrok and SSH started successfully'" >> /start.sh && \
+    echo "echo 'Ngrok dashboard: http://localhost:4040'" >> /start.sh && \
+    echo "while true; do sleep 1000; done" >> /start.sh && \
     chmod +x /start.sh
 
-# Expose ports (including SSH port 22)
-EXPOSE 22 80 8888 8080 443 5130-5135 3306
+# Health check
+HEALTHCHECK --interval=30s --timeout=30s --start-period=5s --retries=3 \
+    CMD curl -f http://localhost:4040/api/tunnels || exit 1
+
+# Expose ports
+EXPOSE 22 80 8888 8080 443 5130-5135 3306 4040
 
 # Start the service
 CMD ["/bin/bash", "/start.sh"]
