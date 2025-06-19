@@ -21,15 +21,14 @@ RUN apt-get update && \
         unzip \
         wget \
         jq \
-        netcat-openbsd && \  # Changed from netcat to netcat-openbsd
-    localedef -i en_US -c -f UTF-8 -A /usr/share/locale/locale.alias en_US.UTF-8 && \
-    apt-get clean && \
-    rm -rf /var/lib/apt/lists/*
+        netcat-openbsd && \
+    rm -rf /var/lib/apt/lists/* && \
+    sed -i '/en_US.UTF-8/s/^# //g' /etc/locale.gen && \
+    locale-gen
 
 # Install Node.js (for simple HTTP server)
 RUN curl -sL https://deb.nodesource.com/setup_21.x | bash - && \
     apt-get install -y nodejs && \
-    apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
 # Configure SSH to bind to all interfaces
