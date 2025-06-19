@@ -1,26 +1,59 @@
 FROM debian:bookworm-slim
 
-RUN apt-get -y update && apt-get -y upgrade && apt-get install -y sudo
-RUN sudo apt-get install -y curl ffmpeg git locales nano python3-pip screen ssh unzip wget  
-RUN localedef -i en_US -c -f UTF-8 -A /usr/share/locale/locale.alias en_US.UTF-8
-RUN curl -sL https://deb.nodesource.com/setup_21.x | bash -
-RUN sudo apt-get install -y nodejs
-ENV LANG en_US.utf8
+# Set environment variables
+ENV LANG=en_US.utf8 \
+    DEBIAN_FRONTEND=noninteractive
 
+# Install dependencies with cleanup
+RUN apt-get update && \
+    apt-get upgrade -y && \
+    apt-get install -y --no-install-recommends \
+        curl \
+        ffmpeg \
+        git \
+        locales \
+        nano \
+        python3-pip \
+        screen \
+        openssh-server \
+        unzip \
+        wget && \
+    localedef -i en_US -c -f UTF-8 -A /usr/share/locale/locale.alias en_US.UTF-8 && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
+
+# Install Node.js
+RUN curl -sL https://deb.nodesource.com/setup_21.x | bash - && \
+    apt-get install -y nodejs && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
+
+# Configure SSH
+RUN mkdir /run/sshd && \
+    echo 'PermitRootLogin yes' >> /etc/ssh/sshd_config && \
+    echo 'PasswordAuthentication yes' >> /etc/ssh/sshd_config && \
+    echo 'root:choco' | chpasswd
+
+# Ngrok setup
 ARG NGROK_TOKEN
 ENV NGROK_TOKEN=${NGROK_TOKEN}
-RUN wget -O ngrok.zip https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-linux-amd64.zip
-RUN unzip ngrok.zip
-RUN echo "./ngrok config add-authtoken ${NGROK_TOKEN} &&" >>/start
-RUN echo "./ngrok tcp --region ap 22 &>/dev/null &" >>/start
+RUN wget -O ngrok.zip https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-linux-amd64.zip && \
+    unzip ngrok.zip && \
+    rm ngrok.zip && \
+    mkdir -p /root/.config/ngrok && \
+    echo "authtoken: ${NGROK_TOKEN}" > /root/.config/ngrok/ngrok.yml && \
+    chmod +x ngrok
 
-RUN mkdir /run/sshd
-RUN echo '/usr/sbin/sshd -D' >>/start
-RUN echo 'PermitRootLogin yes' >>  /etc/ssh/sshd_config 
-RUN echo "PasswordAuthentication yes" >> /etc/ssh/sshd_config
-RUN echo root:kaal|chpasswd
-RUN service ssh start
-RUN chmod 755 /start
+# Create startup script
+RUN echo "#!/bin/bash" > /start.sh && \
+    echo "service ssh start" >> /start.sh && \
+    echo "./ngrok tcp 22 &" >> /start.sh && \
+    echo "echo 'Ngrok and SSH started'" >> /start.sh && \
+    echo "tail -f /dev/null" >> /start.sh && \
+    chmod +x /start.sh
 
-EXPOSE 80 8888 8080 443 5130 5131 5132 5133 5134 5135 3306
-CMD  /start
+# Expose ports (including SSH port 22)
+EXPOSE 22 80 8888 8080 443 5130-5135 3306
+
+# Start the service
+CMD ["/bin/bash", "/start.sh"]
