@@ -3,7 +3,8 @@ FROM debian:bookworm-slim
 # Set environment variables
 ENV LANG=en_US.utf8 \
     DEBIAN_FRONTEND=noninteractive \
-    NGROK_VERSION=3.3.5
+    NGROK_VERSION=3.3.5 \
+    PORT=10000
 
 # Install dependencies with cleanup
 RUN apt-get update && \
@@ -19,12 +20,13 @@ RUN apt-get update && \
         openssh-server \
         unzip \
         wget \
-        jq && \
+        jq \
+        netcat && \
     localedef -i en_US -c -f UTF-8 -A /usr/share/locale/locale.alias en_US.UTF-8 && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
-# Install Node.js
+# Install Node.js (for simple HTTP server)
 RUN curl -sL https://deb.nodesource.com/setup_21.x | bash - && \
     apt-get install -y nodejs && \
     apt-get clean && \
@@ -48,26 +50,38 @@ RUN wget -O ngrok.zip https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v${NGROK_VERSIO
     echo "region: ap" >> /root/.config/ngrok/ngrok.yml && \
     chmod +x ngrok
 
-# Create startup script that exposes ngrok URL
+# Create a simple HTTP server to satisfy Render's requirements
+RUN echo "const express = require('express');" > /server.js && \
+    echo "const app = express();" >> /server.js && \
+    echo "const port = process.env.PORT || 10000;" >> /server.js && \
+    echo "app.get('/', (req, res) => {" >> /server.js && \
+    echo "  res.send('SSH access available via ngrok - check logs for connection details');" >> /server.js && \
+    echo "});" >> /server.js && \
+    echo "app.listen(port, '0.0.0.0', () => {" >> /server.js && \
+    echo "  console.log(`Web server listening on port ${port}`);" >> /server.js && \
+    echo "});" >> /server.js
+
+# Create startup script
 RUN echo "#!/bin/bash" > /start.sh && \
     echo "service ssh start" >> /start.sh && \
     echo "./ngrok tcp 22 --log=stdout &" >> /start.sh && \
+    echo "node /server.js &" >> /start.sh && \
     echo "echo 'Waiting for ngrok to initialize...'" >> /start.sh && \
     echo "sleep 5" >> /start.sh && \
     echo "NGROK_URL=\$(curl -s http://localhost:4040/api/tunnels | jq -r '.tunnels[0].public_url')" >> /start.sh && \
     echo "echo 'Ngrok and SSH started successfully'" >> /start.sh && \
     echo "echo 'SSH via Ngrok: ssh root@\${NGROK_URL#*://}'" >> /start.sh && \
-    echo "echo 'Ngrok dashboard: http://localhost:4040'" >> /start.sh && \
+    echo "echo 'Web interface: http://localhost:4040'" >> /start.sh && \
     echo "echo 'To keep container running...'" >> /start.sh && \
     echo "while true; do sleep 1000; done" >> /start.sh && \
     chmod +x /start.sh
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=30s --start-period=5s --retries=3 \
-    CMD curl -f http://localhost:4040/api/tunnels || exit 1
+    CMD curl -f http://localhost:${PORT} || exit 1
 
-# Expose ports (including SSH port 22 and ngrok web interface 4040)
-EXPOSE 22 4040
+# Expose ports
+EXPOSE ${PORT} 22 4040
 
 # Start the service
 CMD ["/bin/bash", "/start.sh"]
